@@ -1,7 +1,9 @@
 // lib/pages/feed_page.dart
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/posts_service.dart';
@@ -9,7 +11,6 @@ import '../services/ai_summary_service.dart';
 
 class FeedPage extends StatefulWidget {
   const FeedPage({super.key});
-
   @override
   State<FeedPage> createState() => _FeedPageState();
 }
@@ -22,6 +23,7 @@ class _FeedPageState extends State<FeedPage> {
   bool _loading = false;
   String? _error;
   List<PostItem> _posts = [];
+  String _query = '';
 
   @override
   void initState() {
@@ -35,7 +37,7 @@ class _FeedPageState extends State<FeedPage> {
       _error = null;
     });
     try {
-      final data = await _postsService.fetchFeed(limit: 100);
+      final data = await _postsService.fetchFeed(limit: 200);
       setState(() => _posts = data);
     } catch (e) {
       setState(() => _error = 'Error al cargar feed: $e');
@@ -52,7 +54,6 @@ class _FeedPageState extends State<FeedPage> {
       );
       return;
     }
-
     final res = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['pdf'],
@@ -74,10 +75,7 @@ class _FeedPageState extends State<FeedPage> {
     });
     try {
       await _postsService.createPost(
-        caption: caption,
-        filename: file.name,
-        bytes: bytes,
-      );
+          caption: caption, filename: file.name, bytes: bytes);
       _captionCtrl.clear();
       await _refresh();
       if (mounted) {
@@ -93,12 +91,11 @@ class _FeedPageState extends State<FeedPage> {
   }
 
   Future<void> _openPdf(PostItem post) async {
-    final uri = Uri.parse(post.fileUrl);
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final ok = await launchUrl(Uri.parse(post.fileUrl),
+        mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo abrir el PDF')),
-      );
+          const SnackBar(content: Text('No se pudo abrir el PDF')));
     }
   }
 
@@ -106,7 +103,7 @@ class _FeedPageState extends State<FeedPage> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
+      builder: (_) => const _BlurDialog(child: CircularProgressIndicator()),
     );
 
     AISummaryResult result;
@@ -115,7 +112,7 @@ class _FeedPageState extends State<FeedPage> {
         postId: post.id,
         pdfUrl: post.fileUrl,
         prompt:
-            'Resume el PDF en español con una introducción breve, viñetas claras y puntos clave (200-250 palabras).',
+            'Resume el PDF en español con introducción breve, viñetas claras y puntos clave (200–250 palabras).',
       );
     } catch (e) {
       if (mounted) Navigator.of(context).pop();
@@ -125,9 +122,8 @@ class _FeedPageState extends State<FeedPage> {
         isScrollControlled: true,
         showDragHandle: true,
         builder: (_) => Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text('Error al resumir: $e'),
-        ),
+            padding: const EdgeInsets.all(16),
+            child: Text('Error al resumir: $e')),
       );
       return;
     } finally {
@@ -139,9 +135,10 @@ class _FeedPageState extends State<FeedPage> {
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (_) => DraggableScrollableSheet(
         expand: false,
-        initialChildSize: 0.65,
+        initialChildSize: 0.7,
         minChildSize: 0.4,
         maxChildSize: 0.95,
         builder: (_, controller) => Padding(
@@ -149,28 +146,23 @@ class _FeedPageState extends State<FeedPage> {
           child: ListView(
             controller: controller,
             children: [
-              Text('Resumen del PDF con IA',
-                  style: Theme.of(context).textTheme.titleLarge),
+              Row(
+                children: [
+                  const Icon(Icons.summarize_outlined),
+                  const SizedBox(width: 8),
+                  Text('Resumen IA',
+                      style: Theme.of(context).textTheme.titleLarge),
+                ],
+              ),
               const SizedBox(height: 12),
               SelectableText(result.text),
               const SizedBox(height: 16),
               if (result.fileUrl != null)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.download_outlined),
-                    label: const Text('Abrir archivo .md'),
-                    onPressed: () async {
-                      final ok = await launchUrl(Uri.parse(result.fileUrl!),
-                          mode: LaunchMode.externalApplication);
-                      if (!ok && context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text('No se pudo abrir el archivo')),
-                        );
-                      }
-                    },
-                  ),
+                FilledButton.tonalIcon(
+                  onPressed: () => launchUrl(Uri.parse(result.fileUrl!),
+                      mode: LaunchMode.externalApplication),
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('Abrir archivo .md'),
                 ),
             ],
           ),
@@ -188,7 +180,6 @@ class _FeedPageState extends State<FeedPage> {
       );
       return;
     }
-
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -220,6 +211,16 @@ class _FeedPageState extends State<FeedPage> {
     }
   }
 
+  List<PostItem> get _filtered {
+    if (_query.trim().isEmpty) return _posts;
+    final q = _query.toLowerCase();
+    return _posts
+        .where((p) =>
+            p.caption.toLowerCase().contains(q) ||
+            p.filePath.toLowerCase().contains(q))
+        .toList();
+  }
+
   @override
   void dispose() {
     _captionCtrl.dispose();
@@ -229,85 +230,189 @@ class _FeedPageState extends State<FeedPage> {
   @override
   Widget build(BuildContext context) {
     final user = Supabase.instance.client.auth.currentUser!;
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Feed de PDFs'),
-        actions: [
-          TextButton.icon(
-            onPressed:
-                _loading ? null : () => Supabase.instance.client.auth.signOut(),
-            icon: const Icon(Icons.logout),
-            label: const Text('Salir'),
-          ),
-        ],
-      ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Card(
-              elevation: 0,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        CircleAvatar(
-                            child: Text((user.email ?? 'U')[0].toUpperCase())),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextField(
-                            controller: _captionCtrl,
-                            decoration: const InputDecoration(
-                              labelText: 'Escribe un texto para tu PDF...',
-                              border: OutlineInputBorder(),
-                            ),
-                            maxLines: 2,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        FilledButton.icon(
-                          onPressed: _loading ? null : _pickAndPublish,
-                          icon: _loading
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child:
-                                      CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.picture_as_pdf_outlined),
-                          label: const Text('Subir PDF'),
-                        ),
-                      ],
+        child: CustomScrollView(
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              expandedHeight: 132,
+              flexibleSpace: FlexibleSpaceBar(
+                titlePadding:
+                    const EdgeInsetsDirectional.only(start: 16, bottom: 16),
+                title: const Text('Feed de PDFs'),
+                background: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [cs.primaryContainer, cs.secondaryContainer],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
                     ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 8),
-                      Text(_error!,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error)),
-                    ],
-                  ],
+                  ),
+                ),
+              ),
+              actions: [
+                IconButton(
+                  tooltip: 'Salir',
+                  onPressed: () => Supabase.instance.client.auth.signOut(),
+                  icon: const Icon(Icons.logout),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
+
+            // Búsqueda
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: SearchBar(
+                  hintText: 'Buscar por título o archivo…',
+                  leading: const Icon(Icons.search),
+                  onChanged: (v) => setState(() => _query = v),
                 ),
               ),
             ),
-            const SizedBox(height: 12),
-            if (_loading && _posts.isEmpty)
-              const Center(
-                  child: Padding(
-                      padding: EdgeInsets.all(24.0),
-                      child: CircularProgressIndicator())),
-            for (final p in _posts)
-              _PdfCard(
-                post: p,
-                onOpen: _openPdf,
-                onDelete: _delete,
-                onSummarize: _summarize,
+
+            // Composer
+            SliverToBoxAdapter(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: _Composer(
+                  email: user.email ?? 'U',
+                  controller: _captionCtrl,
+                  loading: _loading,
+                  errorText: _error,
+                  onSubmit: _pickAndPublish,
+                )
+                    .animate()
+                    .fadeIn(duration: 250.ms, curve: Curves.easeOut)
+                    .moveY(begin: 8, end: 0, duration: 250.ms),
               ),
-            const SizedBox(height: 48),
+            ),
+
+            // Grid
+            if (_loading && _posts.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(48),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+              )
+            else if (_filtered.isEmpty)
+              const SliverToBoxAdapter(child: _EmptyState())
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+                sliver: SliverGrid(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final p = _filtered[index];
+                      return _PdfCard(
+                        post: p,
+                        onOpen: _openPdf,
+                        onDelete: _delete,
+                        onSummarize: _summarize,
+                      )
+                          .animate()
+                          .fadeIn(delay: (index * 40).ms, duration: 220.ms)
+                          .moveY(begin: 10, end: 0, curve: Curves.easeOutCubic);
+                    },
+                    childCount: _filtered.length,
+                  ),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 420,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    mainAxisExtent: 176,
+                  ),
+                ),
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _Composer extends StatelessWidget {
+  final String email;
+  final TextEditingController controller;
+  final bool loading;
+  final String? errorText;
+  final VoidCallback onSubmit;
+  const _Composer({
+    required this.email,
+    required this.controller,
+    required this.loading,
+    required this.errorText,
+    required this.onSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        gradient: LinearGradient(
+          colors: [cs.surface, cs.surfaceVariant.withOpacity(.6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+              blurRadius: 20,
+              color: Colors.black.withOpacity(0.06),
+              offset: const Offset(0, 8))
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(children: [
+          Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: cs.primaryContainer,
+                child: Text((email.isNotEmpty ? email[0] : 'U').toUpperCase()),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  decoration: const InputDecoration(
+                    hintText: 'Escribe un texto para tu PDF...',
+                    border: OutlineInputBorder(borderSide: BorderSide.none),
+                    isDense: true,
+                  ),
+                  maxLines: 2,
+                ),
+              ),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: loading ? null : onSubmit,
+                icon: loading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.picture_as_pdf_outlined),
+                label: const Text('Subir PDF'),
+              ),
+            ],
+          ),
+          if (errorText != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(errorText!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            ),
+          ],
+        ]),
       ),
     );
   }
@@ -331,39 +436,176 @@ class _PdfCard extends StatelessWidget {
     return idx >= 0 ? path.substring(idx + 1) : path;
   }
 
+  String _prettyDate(DateTime dt) {
+    final d = dt;
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final me = Supabase.instance.client.auth.currentUser!;
     final isOwner = me.id == post.userId;
+    final cs = Theme.of(context).colorScheme;
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: const Icon(Icons.picture_as_pdf, color: Colors.redAccent),
-        title: Text(post.caption.isEmpty ? '(Sin título)' : post.caption),
-        subtitle: Text(_fileName(post.filePath)),
-        trailing: Wrap(
-          spacing: 8,
-          children: [
-            IconButton(
-              tooltip: 'Abrir PDF',
-              onPressed: () => onOpen(post),
-              icon: const Icon(Icons.open_in_new),
-            ),
-            IconButton(
-              tooltip: 'Resumir (genera y guarda .md)',
-              onPressed: () => onSummarize(post),
-              icon: const Icon(Icons.summarize_outlined),
-            ),
-            if (isOwner)
-              IconButton(
-                tooltip: 'Eliminar',
-                onPressed: () => onDelete(post),
-                icon: const Icon(Icons.delete_outline),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => onOpen(post),
+        child: Stack(children: [
+          Positioned.fill(
+              child: CustomPaint(
+                  painter: _SoftPatternPainter(color: cs.primaryContainer))),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.withOpacity(.25)),
+                  ),
+                  child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(Icons.picture_as_pdf, size: 16, color: Colors.red),
+                    SizedBox(width: 6),
+                    Text('PDF', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ]),
+                ),
+                const Spacer(),
+                Tooltip(
+                  message: 'Abrir PDF',
+                  child: IconButton(
+                      onPressed: () => onOpen(post),
+                      icon: const Icon(Icons.open_in_new),
+                      visualDensity: VisualDensity.compact),
+                ),
+                Tooltip(
+                  message: 'Resumir con IA',
+                  child: IconButton(
+                      onPressed: () => onSummarize(post),
+                      icon: const Icon(Icons.summarize_outlined),
+                      visualDensity: VisualDensity.compact),
+                ),
+                if (isOwner)
+                  Tooltip(
+                    message: 'Eliminar',
+                    child: IconButton(
+                        onPressed: () => onDelete(post),
+                        icon: const Icon(Icons.delete_outline),
+                        visualDensity: VisualDensity.compact),
+                  ),
+              ]),
+              const SizedBox(height: 12),
+              Text(
+                post.caption.isEmpty ? '(Sin título)' : post.caption,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w700),
               ),
-          ],
-        ),
+              const Spacer(),
+              Row(children: [
+                CircleAvatar(
+                  radius: 14,
+                  backgroundColor: cs.secondaryContainer,
+                  child: Text(
+                      post.authorUsername.isNotEmpty
+                          ? post.authorUsername[0].toUpperCase()
+                          : 'U',
+                      style: const TextStyle(fontSize: 12)),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(_fileName(post.filePath),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall),
+                ),
+                const SizedBox(width: 8),
+                Text(_prettyDate(post.createdAt),
+                    style: Theme.of(context).textTheme.bodySmall),
+              ]),
+            ]),
+          ),
+        ]),
       ),
+    );
+  }
+}
+
+class _SoftPatternPainter extends CustomPainter {
+  final Color color;
+  _SoftPatternPainter({required this.color});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = Random(size.hashCode);
+    final paint = Paint()
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20);
+    for (int i = 0; i < 5; i++) {
+      paint.color = color.withOpacity(0.35 - i * 0.05);
+      final r = size.shortestSide / (6 + i * 2);
+      final dx = rnd.nextDouble() * size.width;
+      final dy = rnd.nextDouble() * size.height;
+      canvas.drawCircle(Offset(dx, dy), r, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SoftPatternPainter oldDelegate) =>
+      oldDelegate.color != color;
+}
+
+class _BlurDialog extends StatelessWidget {
+  final Widget child;
+  const _BlurDialog({required this.child});
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      elevation: 0,
+      backgroundColor: Colors.black.withOpacity(.08),
+      insetPadding: EdgeInsets.zero,
+      child: Container(
+        alignment: Alignment.center,
+        height: 120,
+        width: 120,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface.withOpacity(.7),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(.2)),
+        ),
+        child: child,
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48),
+      child: Column(children: [
+        Icon(Icons.folder_off_outlined, size: 64, color: cs.outline),
+        const SizedBox(height: 12),
+        Text('Sin publicaciones',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(color: cs.onSurface)),
+        const SizedBox(height: 6),
+        Text('Sube tu primer PDF para comenzar.',
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: cs.outline)),
+      ]),
     );
   }
 }

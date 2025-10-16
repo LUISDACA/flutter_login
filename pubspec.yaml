@@ -1,5 +1,5 @@
 name: supa_public_feed
-description: "Flutter + Supabase + Gemini: feed público de PDFs con resumen IA"
+description: "Flutter + Supabase + Gemini + PDFs (UI 2025)"
 publish_to: "none"
 
 environment:
@@ -14,6 +14,9 @@ dependencies:
   url_launcher: ^6.3.0
   http: ^1.2.2
   google_generative_ai: ^0.4.6
+  dynamic_color: ^1.6.9
+  google_fonts: ^6.2.1
+  flutter_animate: ^4.5.0
 
 dev_dependencies:
   flutter_test:
